@@ -98,14 +98,52 @@ interface Record57 {
   pv_location?: string;
 }
 
+type Field = 'name' | 'active_substance' | 'route' | 'country' | 'holder' | 'pv_location';
+const FIELDS: readonly Field[] = ['name', 'active_substance', 'route', 'country', 'holder', 'pv_location'];
+
+// SCHEMA 2 (scripts/ingest-ema-article57.mjs → encodeColumns): each column is
+// a table of unique strings plus one index per row (-1 = empty). Schema 1 was
+// one object per row, 29 MB of JSON, and it hit Cloudflare 1102 (resource
+// limits) in the gateway isolate on cold calls. This is 6.35 MB, and every
+// filter is decided once per UNIQUE value (32 countries, ~4,000 holders)
+// rather than once per row.
 interface DatasetFile {
   schema: number;
   generated_at: string;
   source_url: string;
   source_last_modified: string | null;
   row_count: number;
-  rows: Record57[];
+  dict: Record<Field, string[]>;
+  cols: Record<Field, number[]>;
 }
+
+const SCHEMA = 2;
+
+function cell(ds: DatasetFile, f: Field, i: number): string | undefined {
+  const j = ds.cols[f][i];
+  return j >= 0 ? ds.dict[f][j] : undefined;
+}
+
+function rowAt(ds: DatasetFile, i: number): Record57 {
+  const r: Record57 = { name: cell(ds, 'name', i) ?? '' };
+  for (const f of FIELDS) {
+    if (f === 'name') continue;
+    const v = cell(ds, f, i);
+    if (v !== undefined) r[f] = v;
+  }
+  return r;
+}
+
+// Which dictionary entries satisfy a predicate — computed over the unique
+// values, then looked up per row by index.
+function dictHits(ds: DatasetFile, f: Field, pred: (lowerValue: string) => boolean): Uint8Array {
+  const table = ds.dict[f];
+  const hits = new Uint8Array(table.length);
+  for (let j = 0; j < table.length; j++) if (pred(table[j].toLowerCase())) hits[j] = 1;
+  return hits;
+}
+
+const hit = (hits: Uint8Array, j: number) => j >= 0 && hits[j] === 1;
 
 interface SnapshotsIndex {
   schema: number;
@@ -125,7 +163,7 @@ const DATASET_UNAVAILABLE = {
 
 // Gzip-decompress + JSON.parse only once per isolate; every subsequent call
 // in the same isolate reuses it. A fresh isolate re-fetches from R2, which is
-// cheap (3.6 MB gzipped) next to re-parsing the source XLSX would be.
+// cheap (1.42 MB gzipped) next to re-parsing the source XLSX would be.
 let CACHE: { at: number; data: DatasetFile } | null = null;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
@@ -141,8 +179,17 @@ async function gunzipJson<T>(obj: { arrayBuffer(): Promise<ArrayBuffer> }): Prom
   const buf = await obj.arrayBuffer();
   const stream = new Response(buf).body?.pipeThrough(new DecompressionStream('gzip'));
   if (!stream) throw new Error('ema_article57_decompress_unsupported');
-  const text = td.decode(await new Response(stream).arrayBuffer());
-  return JSON.parse(text) as T;
+  return (await new Response(stream).json()) as T;
+}
+
+function checkSchema(ds: DatasetFile, what: string): DatasetFile {
+  if (ds.schema !== SCHEMA || !ds.dict || !ds.cols) {
+    throw new Error(
+      `ema_article57_schema_mismatch: ${what} is schema ${ds.schema}, this pack reads schema ${SCHEMA}. ` +
+        'Re-run scripts/ingest-ema-article57.mjs.',
+    );
+  }
+  return ds;
 }
 
 async function loadDataset(args: Record<string, unknown>): Promise<DatasetFile | null> {
@@ -151,7 +198,7 @@ async function loadDataset(args: Record<string, unknown>): Promise<DatasetFile |
   if (!r2) return null;
   const obj = await r2.get(`${PREFIX}/latest.json.gz`);
   if (!obj) return null;
-  const data = await gunzipJson<DatasetFile>(obj);
+  const data = checkSchema(await gunzipJson<DatasetFile>(obj), 'latest.json.gz');
   CACHE = { at: Date.now(), data };
   return data;
 }
@@ -161,7 +208,7 @@ async function loadSnapshot(args: Record<string, unknown>, dateStr: string): Pro
   if (!r2) return null;
   const obj = await r2.get(`${PREFIX}/snapshots/${dateStr}.json.gz`);
   if (!obj) return null;
-  return gunzipJson<DatasetFile>(obj);
+  return checkSchema(await gunzipJson<DatasetFile>(obj), `snapshot ${dateStr}`);
 }
 
 async function loadSnapshotsIndex(args: Record<string, unknown>): Promise<SnapshotsIndex | null> {
@@ -199,10 +246,6 @@ function normQuery(s: string): string {
   return s.trim().toLowerCase();
 }
 
-function matchesQuery(rec: Record57, q: string): boolean {
-  const hay = `${rec.name} ${rec.active_substance ?? ''} ${rec.holder ?? ''}`.toLowerCase();
-  return hay.includes(q);
-}
 
 // ─────────────────────────────── tool defs ───────────────────────────────
 
@@ -294,15 +337,28 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const limit = Math.min(Math.max(Number(args.limit ?? 25) || 25, 1), 200);
       const offset = Math.max(Number(args.offset ?? 0) || 0, 0);
 
-      let rows = ds.rows;
-      if (query) rows = rows.filter((r) => matchesQuery(r, query));
-      if (activeSubstance) rows = rows.filter((r) => (r.active_substance ?? '').toLowerCase().includes(activeSubstance));
-      if (holder) rows = rows.filter((r) => (r.holder ?? '').toLowerCase().includes(holder));
-      if (country) rows = rows.filter((r) => (r.country ?? '').toLowerCase() === country.toLowerCase());
-      if (route) rows = rows.filter((r) => (r.route ?? '').toLowerCase().includes(route));
+      // Free text matches product name, active substance or holder.
+      const qName = query ? dictHits(ds, 'name', (v) => v.includes(query)) : null;
+      const qSubst = query ? dictHits(ds, 'active_substance', (v) => v.includes(query)) : null;
+      const qHolder = query ? dictHits(ds, 'holder', (v) => v.includes(query)) : null;
+      const fSubst = activeSubstance ? dictHits(ds, 'active_substance', (v) => v.includes(activeSubstance)) : null;
+      const fHolder = holder ? dictHits(ds, 'holder', (v) => v.includes(holder)) : null;
+      const cLower = country?.toLowerCase();
+      const fCountry = cLower ? dictHits(ds, 'country', (v) => v === cLower) : null;
+      const fRoute = route ? dictHits(ds, 'route', (v) => v.includes(route)) : null;
+      const C = ds.cols;
 
-      const total = rows.length;
-      const page = rows.slice(offset, offset + limit);
+      let total = 0;
+      const page: Record57[] = [];
+      for (let i = 0; i < ds.row_count; i++) {
+        if (qName && !(hit(qName, C.name[i]) || hit(qSubst!, C.active_substance[i]) || hit(qHolder!, C.holder[i]))) continue;
+        if (fSubst && !hit(fSubst, C.active_substance[i])) continue;
+        if (fHolder && !hit(fHolder, C.holder[i])) continue;
+        if (fCountry && !hit(fCountry, C.country[i])) continue;
+        if (fRoute && !hit(fRoute, C.route[i])) continue;
+        if (total >= offset && page.length < limit) page.push(rowAt(ds, i));
+        total++;
+      }
       return {
         ...sourceBlock(ds),
         total_matches: total,
@@ -323,13 +379,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const countryFilter = typeof args.country === 'string' && args.country.trim() ? args.country.trim().toLowerCase() : null;
 
       const nameLower = name.toLowerCase();
-      let matches = ds.rows.filter((r) => r.name.toLowerCase() === nameLower);
+      const collect = (names: Uint8Array) => {
+        const out: Record57[] = [];
+        for (let i = 0; i < ds.row_count; i++) if (hit(names, ds.cols.name[i])) out.push(rowAt(ds, i));
+        return out;
+      };
+      let matches = collect(dictHits(ds, 'name', (v) => v === nameLower));
       if (matches.length === 0) {
         // Fall back to substring match, but say so — an exact hit and a
         // fuzzy hit are different confidence levels for a regulatory lookup.
-        matches = ds.rows.filter((r) => r.name.toLowerCase().includes(nameLower));
+        matches = collect(dictHits(ds, 'name', (v) => v.includes(nameLower)));
       }
       if (countryFilter) matches = matches.filter((r) => (r.country ?? '').toLowerCase() === countryFilter);
+      // A substring hit on a common word can match thousands of rows.
+      const MAX_RECORDS = 500;
+      const truncated = matches.length > MAX_RECORDS;
+      const totalRecords = matches.length;
+      if (truncated) matches = matches.slice(0, MAX_RECORDS);
 
       if (matches.length === 0) {
         return {
@@ -347,6 +413,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         match_type: exact ? 'exact' : 'substring',
         name_queried: name,
         countries_found: [...new Set(matches.map((r) => r.country).filter(Boolean))],
+        total_records: totalRecords,
+        truncated,
         records: matches,
         authoritative_document_url: SOURCE_URL,
         note: 'Article 57 carries no indication text or per-product page; this is the authoritative EMA source document.',
@@ -390,11 +458,34 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         };
       }
 
-      const key = (r: Record57) => `${r.name}\u0000${r.country ?? ''}`;
-      const baselineKeys = new Set(baseline.rows.map(key));
-      const latestKeys = new Set(latest.rows.map(key));
-      const added = latest.rows.filter((r) => !baselineKeys.has(key(r)));
-      const removed = baseline.rows.filter((r) => !latestKeys.has(key(r)));
+      // Keyed country -> set of product names, holding references to the
+      // dictionary strings already in memory. Concatenated "name|country"
+      // keys allocated 2 x 164k new strings and pushed this call to ~95 MB.
+      type Keys = Map<string, Set<string>>;
+      const keysOf = (d: DatasetFile): Keys => {
+        const m: Keys = new Map();
+        for (let i = 0; i < d.row_count; i++) {
+          const c = cell(d, 'country', i) ?? '';
+          let set = m.get(c);
+          if (!set) { set = new Set(); m.set(c, set); }
+          set.add(cell(d, 'name', i) ?? '');
+        }
+        return m;
+      };
+      const has = (k: Keys, d: DatasetFile, i: number) =>
+        k.get(cell(d, 'country', i) ?? '')?.has(cell(d, 'name', i) ?? '') ?? false;
+      const diff = (from: DatasetFile, against: Keys) => {
+        const out: Record57[] = [];
+        let n = 0;
+        for (let i = 0; i < from.row_count; i++) {
+          if (has(against, from, i)) continue;
+          if (out.length < 200) out.push(rowAt(from, i));
+          n++;
+        }
+        return { rows: out, n };
+      };
+      const added = diff(latest, keysOf(baseline));
+      const removed = diff(baseline, keysOf(latest));
 
       return {
         ...sourceBlock(latest),
@@ -402,11 +493,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         since_requested: since,
         baseline_snapshot_date: baselineDate,
         latest_snapshot_generated_at: latest.generated_at,
-        added_count: added.length,
-        removed_count: removed.length,
-        added: added.slice(0, 200),
-        removed: removed.slice(0, 200),
-        truncated: added.length > 200 || removed.length > 200,
+        added_count: added.n,
+        removed_count: removed.n,
+        added: added.rows,
+        removed: removed.rows,
+        truncated: added.n > 200 || removed.n > 200,
         note:
           'Added/removed are product-name x country pairs newly present or absent versus the baseline ' +
           'snapshot. The source publishes no per-row change date, so this reflects only what changed ' +
@@ -420,7 +511,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const ds = await loadDataset(args);
       const idx = await loadSnapshotsIndex(args);
       if (!ds) return DATASET_UNAVAILABLE;
-      const countries = [...new Set(ds.rows.map((r) => r.country).filter((c): c is string => Boolean(c)))].sort();
+      const countries = [...ds.dict.country].sort();
       return {
         ...sourceBlock(ds),
         source_page_url: SOURCE_PAGE_URL,

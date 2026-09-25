@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-ema-article57",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "EMA Article 57 product data — every medicine with a valid marketing",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-c64f52511e2b3099b80af0043449d989d5b2cc09b20237d6d6ae77a419f32f3e",
-    "sourceCommit": "916ae806a59e9d4470ec13ee84233c8bb2b8f24f"
+    "sourceHash": "v1-a8781b362938f61399b2de9773e28106602f2999903c4d28e39d117d1d784510",
+    "sourceCommit": "9f81ca390e47bcde251bc6f9f02718e8d880c561"
   }
 }

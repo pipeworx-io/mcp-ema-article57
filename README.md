@@ -25,7 +25,9 @@ Keyless.
 
 Measured 2026-09-25 against the real file: 7.87 MB compressed unzips to 63.0 MB of `sheet1.xml` + 4.7 MB of `sharedStrings.xml` (164,314 rows x 8 columns). Parsing a *much smaller* EMA export with the same regex-scan approach (`ema-medicines`'s ~0.9 MB report) already measured 123 MB of V8 heap; this file is ~9x bigger and would not fit in a Cloudflare Worker's 128 MB ceiling. So this pack reads a pre-built, pre-compacted dataset from the shared `pipeworx-datasets` R2 bucket instead of calling EMA per request. `scripts/ingest-ema-article57.mjs` does the actual fetch + XLSX parse (offline, not in a Worker) and writes:
 
-- `ema-article57/latest.json.gz` — the full 164,314-row array, gzip (39.5 MB raw, 3.6 MB gzipped), read by every tool call.
+- `ema-article57/latest.json.gz` — all 164,314 rows, dictionary-encoded (schema 2: each column is a table of unique strings plus one integer index per row), 6.35 MB raw / 1.42 MB gzipped, read once per isolate.
+
+  **Why columns, not row objects:** schema 1 stored one object per row (29 MB of JSON) and three of the four tools died with Cloudflare error 1102 (resource limits) inside the gateway isolate on 2026-09-25. Every column repeats heavily — 15.9M characters of values, 2.8M unique, 32 countries, ~4,000 holders — so filters are decided once per unique value and looked up per row by index. Measured locally against the real file: search peaks ~33 MB above baseline, recent_changes (two snapshots) ~59 MB, 15 MB held once cached. The pack refuses any other schema rather than misreading it.
 - `ema-article57/snapshots/YYYY-MM-DD.json.gz` — one dated copy per ingest run, kept for `ema_article57_recent_changes` to diff against.
 - `ema-article57/snapshots-index.json` — small, uncompressed list of snapshot dates on record.
 - `ema-article57/meta.json` — generation metadata.
