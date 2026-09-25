@@ -1,0 +1,32 @@
+{
+  "name": "@pipeworx/mcp-ema-article57",
+  "version": "0.1.0",
+  "description": "EMA Article 57 product data — every medicine with a valid marketing",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "mcp-ema-article57": "bin/cli.js"
+  },
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "pipeworx", "ema-article57"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pipeworx-io/mcp-ema-article57.git"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@cloudflare/workers-types": "^4.20260405.1"
+  },
+  "pipeworx": {
+    "sourceHash": "v1-c64f52511e2b3099b80af0043449d989d5b2cc09b20237d6d6ae77a419f32f3e",
+    "sourceCommit": "916ae806a59e9d4470ec13ee84233c8bb2b8f24f"
+  }
+}

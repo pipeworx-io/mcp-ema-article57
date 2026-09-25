@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pipeworx-io/ema-article57",
+  "title": "Ema Article57",
+  "description": "EMA Article 57 product data — every medicine with a valid marketing",
+  "version": "0.1.0",
+  "websiteUrl": "https://pipeworx.io/packs/ema-article57",
+  "repository": {
+    "url": "https://github.com/pipeworx-io/mcp-ema-article57",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://gateway.pipeworx.io/ema-article57/mcp"
+    }
+  ]
+}
