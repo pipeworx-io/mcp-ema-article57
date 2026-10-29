@@ -1,12 +1,20 @@
 {
   "name": "@pipeworx/mcp-ema-article57",
-  "version": "0.1.1",
-  "description": "EMA Article 57 product data — every medicine with a valid marketing",
+  "version": "0.2.0",
+  "description": "EMA Article 57 product data — every medicine with a valid marketing authorisation anywhere in the EEA, sourced from the European Medicines Agency's Article 57 database export (one row per product × authorisation country). Auth: none.",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./tools.json": "./tools.json",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "mcp-ema-article57": "bin/cli.js"
+  },
+  "files": ["bin/", "lib/", "tools.json", "server.json"],
+  "engines": {
+    "node": ">=18"
   },
   "keywords": ["mcp", "mcp-server", "model-context-protocol", "pipeworx", "ema-article57"],
   "license": "MIT",
@@ -14,19 +22,12 @@
     "type": "git",
     "url": "git+https://github.com/pipeworx-io/mcp-ema-article57.git"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "tsx": "^4.19.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.3",
-    "@cloudflare/workers-types": "^4.20260405.1"
-  },
+  "mcpName": "io.github.pipeworx-io/ema-article57",
   "pipeworx": {
-    "sourceHash": "v1-a8781b362938f61399b2de9773e28106602f2999903c4d28e39d117d1d784510",
-    "sourceCommit": "9f81ca390e47bcde251bc6f9f02718e8d880c561"
+    "mode": "gateway",
+    "slug": "ema-article57",
+    "gatewaySlug": "ema-article57",
+    "sourceHash": "v1-36c04ddaeed685a809c72e733c9f8dd35310cd1d2b481b05d79b540b9ba85819",
+    "sourceCommit": "bb047243cf27f32453103de186b8e6a8b6a1ce79"
   }
 }
